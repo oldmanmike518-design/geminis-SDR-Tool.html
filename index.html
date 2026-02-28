@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swivl · SDR Meeting Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* --- BASE STYLES & BRANDING --- */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: #F5F5F7; color: #000; -webkit-font-smoothing: antialiased; line-height: 1.5; padding-bottom: 50px; }
+  button { cursor: pointer; transition: all 0.15s ease; font-family: inherit; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; filter: grayscale(100%); }
+  button:hover:not(:disabled) { filter: brightness(0.9); transform: translateY(-1px); }
+  input, textarea { font-family: inherit; font-size: 14px; background: #fff; border: 1.5px solid #E2E2E5; border-radius: 8px; padding: 12px; width: 100%; transition: all 0.2s; }
+  input:focus, textarea:focus { outline: none; border-color: #8E47FF; box-shadow: 0 0 0 3px rgba(142,71,255,0.15); }
+  
+  /* --- UI COMPONENTS --- */
+  .container { max-width: 680px; margin: 0 auto; padding: 30px 24px; animation: fadeIn 0.3s ease; }
+  .card { background: #fff; border: 1.5px solid #E2E2E5; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .tile { background: #fff; border: 1.5px solid #E2E2E5; border-radius: 10px; padding: 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 15px; cursor: pointer; transition: all 0.15s; user-select: none; }
+  .tile:hover { border-color: #8E47FF; background: #F9F7FF; }
+  .tile.selected { border-color: #8E47FF; background: rgba(142,71,255,0.08); }
+  .label-text { font-size: 11px; font-weight: 700; color: #7A7A7A; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: block; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+  
+  /* --- PRINT STYLES FOR PDF EXPORT --- */
+  @media print {
+    body { background: #fff; padding: 0; }
+    .no-print { display: none !important; }
+    .card { border: 1px solid #ddd; box-shadow: none; break-inside: avoid; }
+    .container { max-width: 100%; padding: 0; }
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+// ==========================================
+// 1. DATA & CONFIGURATION
+// ==========================================
+const C = { purple: '#8E47FF', blue: '#5894F7', orange: '#FF8F00', green: '#34C759', red: '#F5555A', teal: '#5BC1BB', grey: '#7A7A7A' };
+
+const EXPECTS = [
+  { id: 'learn', icon: '📚', label: 'Learn what Swivl M2 can do' },
+  { id: 'demo', icon: '👁️', label: 'See a product demo' },
+  { id: 'fit', icon: '🔍', label: 'Understand if it fits our needs' },
+  { id: 'pricing', icon: '💬', label: 'Discuss pricing direction' },
+  { id: 'compare', icon: '⚖️', label: 'Compare to current tools' },
+  { id: 'buyin', icon: '🤝', label: 'Build buy-in with the team' },
+  { id: 'other', icon: '✏️', label: 'Something else' }
+];
+
+const MISSIONS = [
+  { id: 'learner', icon: '🎯', label: 'Meeting learner needs', color: C.purple },
+  { id: 'growth', icon: '📈', label: 'Student growth and outcomes', color: C.blue },
+  { id: 'teachers', icon: '🏫', label: 'Helping teachers improve', color: C.teal },
+  { id: 'screens', icon: '📵', label: 'Reducing screen dependence', color: C.orange },
+  { id: 'pd', icon: '🛠️', label: 'Professional development', color: C.blue },
+  { id: 'engage', icon: '💬', label: 'Classroom engagement', color: C.green },
+  { id: 'language', icon: '🌐', label: 'Language and translation', color: C.teal },
+  { id: 'sel', icon: '❤️', label: 'SEL and student wellbeing', color: C.red },
+  { id: 'reflect', icon: '🪞', label: 'Culture of reflection', color: C.purple }
+];
+
+const FEATURES = [
+  '180° Auto-tracking camera', 'AI real-time tips and takeaways', 'One-touch M2 Talk', 
+  'MirrorTalk formative assessment', 'Class summaries', 'Guided student activities', 
+  'Multi-dock / multi-remote audio', 'Language and translation support', 
+  'Admin dashboard and insights', 'Isolated audio tracks'
+];
+
+// ==========================================
+// 2. STATE MANAGEMENT
+// ==========================================
+let S = {
+  view: 'home',
+  step: 1,
+  data: { expectations: [], missions: [], features: [], date: new Date().toLocaleDateString() },
+  records: JSON.parse(localStorage.getItem('swivl_meetings') || '[]'),
+  copyMsg: ''
+};
+
+// ==========================================
+// 3. CORE LOGIC & "MICHAEL" CURSOR FIX
+// ==========================================
+// This function updates the data WITHOUT redrawing the screen, protecting the cursor
+function handleInput(field, value) {
+  S.data[field] = value;
+  validateStep();
+}
+
+function validateStep() {
+  const nextBtn = document.getElementById('next-btn');
+  if (!nextBtn) return;
+  
+  if (S.step === 1) {
+    nextBtn.disabled = !(S.data.name && S.data.name.trim() !== '' && S.data.org && S.data.org.trim() !== '');
+  } else if (S.step === 6) {
+    nextBtn.disabled = !S.data.branch;
+  } else {
+    nextBtn.disabled = false;
+  }
+}
+
+function toggleArray(key, value) {
+  if (S.data[key].includes(value)) {
+    S.data[key] = S.data[key].filter(v => v !== value);
+  } else {
+    S.data[key].push(value);
+  }
+  render();
+}
+
+function setBranch(branchName) {
+  S.data.branch = branchName;
+  render();
+}
+
+function nav(direction) {
+  S.step += direction;
+  window.scrollTo(0, 0);
+  render();
+}
+
+function escape(str) {
+  return (str || '').toString().replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ==========================================
+// 4. CRM COPY & PDF EXPORT
+// ==========================================
+function copyToCRM() {
+  const d = S.data;
+  const text = `SWIVL DISCOVERY SUMMARY
+-------------------------
+CONTACT: ${d.name || 'N/A'}
+ORG: ${d.org || 'N/A'}
+ROLE: ${d.role || 'N/A'}
+EXPECTATIONS: ${d.expectations.join(', ') || 'None'}
+PRIORITIES: ${d.missions.join(', ') || 'None'}
+PAIN POINT: ${d.pain || 'N/A'}
+KEY FEATURES: ${d.features.join(', ') || 'None'}
+OUTCOME: ${d.branch === 'buy' ? 'Ready to Buy' : d.branch === 'pilot' ? 'Needs Pilot/More Info' : d.branch === 'nurture' ? 'Nurture Track' : 'N/A'}
+NEXT STEPS: ${d.nextAction || 'N/A'}
+AM NOTES: ${d.amNotes || 'N/A'}`;
+
+  navigator.clipboard.writeText(text).then(() => {
+    S.copyMsg = "✅ Copied for CRM!";
+    render();
+    setTimeout(() => { S.copyMsg = ""; render(); }, 2500);
+  });
+}
+
+function saveRecord() {
+  S.records.unshift({ id: Date.now(), data: { ...S.data } });
+  localStorage.setItem('swivl_meetings', JSON.stringify(S.records));
+  S.view = 'home';
+  render();
+}
+
+// ==========================================
+// 5. RENDER ENGINE & VIEWS
+// ==========================================
+function render() {
+  const app = document.getElementById('app');
+  if (S.view === 'home') app.innerHTML = ViewHome();
+  else if (S.view === 'records') app.innerHTML = ViewRecords();
+  else app.innerHTML = ViewMeeting();
+  validateStep(); // Ensure buttons are correct on load
+}
+
+function ViewHome() {
+  return `
+    <div class="container" style="text-align: center; margin-top: 80px;">
+      <div style="font-family: Georgia, serif; font-style: italic; font-weight: 700; font-size: 42px; margin-bottom: 10px;">Swivl</div>
+      <h1 style="font-size: 24px; margin-bottom: 15px;">Live SDR Companion</h1>
+      <p style="color: ${C.grey}; margin-bottom: 40px;">Standardize discovery and automate CRM handoffs.</p>
+      
+      <button onclick="S.data={expectations:[], missions:[], features:[], date: new Date().toLocaleDateString()}; S.step=1; S.view='meeting'; render();" 
+              style="background: ${C.purple}; color: white; border: none; padding: 18px 40px; border-radius: 10px; font-weight: 700; font-size: 16px;">
+        ▶ Start New Meeting
+      </button>
+      
+      <div onclick="S.view='records'; render();" style="margin-top: 30px; color: ${C.purple}; font-weight: 600; cursor: pointer;">
+        View Past Meetings (${S.records.length})
+      </div>
+    </div>
+  `;
+}
+
+function ViewMeeting() {
+  const d = S.data;
+  let content = '';
+
+  // Sticky Header
+  const header = `
+    <div class="no-print" style="background: #fff; border-bottom: 1px solid #E2E2E5; padding: 15px 24px; position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center;">
+      <div style="font-weight: 600;">
+        <span style="color: ${C.purple}; font-family: Georgia, serif; font-style: italic;">Swivl</span> 
+        <span style="color: #E2E2E5; margin: 0 10px;">|</span> 
+        ${escape(d.name) || 'New Prospect'}
+      </div>
+      <button onclick="if(confirm('Exit without saving?')) { S.view='home'; render(); }" style="background: none; border: none; color: ${C.grey}; font-weight: 600;">✕ Exit</button>
+    </div>
+  `;
+
+  // Progress Bar
+  const progress = `
+    <div class="no-print" style="margin-bottom: 30px;">
+      <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: ${C.purple}; text-transform: uppercase; margin-bottom: 8px;">
+        <span>Step ${S.step} of 7</span>
+        <span>${Math.round((S.step/7)*100)}%</span>
+      </div>
+      <div style="height: 4px; background: #E2E2E5; border-radius: 2px; overflow: hidden;">
+        <div style="width: ${(S.step/7)*100}%; height: 100%; background: ${C.purple}; transition: width 0.3s ease;"></div>
+      </div>
+    </div>
+  `;
+
+  // STEP 1: INFO
+  if (S.step === 1) {
+    content = `
+      <h2>Prospect Information</h2>
+      <p style="color: ${C.grey}; margin-bottom: 24px;">Enter details before or during introductions.</p>
+      
+      <div class="card grid-2">
+        <div><label class="label-text">Contact Name *</label><input type="text" value="${escape(d.name)}" oninput="handleInput('name', this.value)" placeholder="e.g. Sarah Johnson"></div>
+        <div><label class="label-text">School / District *</label><input type="text" value="${escape(d.org)}" oninput="handleInput('org', this.value)" placeholder="e.g. Austin ISD"></div>
+      </div>
+      <div class="card grid-2">
+        <div><label class="label-text">Their Role</label><input type="text" value="${escape(d.role)}" oninput="handleInput('role', this.value)" placeholder="e.g. Curriculum Director"></div>
+        <div><label class="label-text">Meeting Date</label><input type="text" value="${escape(d.date)}" disabled style="background: #F5F5F7;"></div>
+      </div>
+    `;
+  }
+  
+  // STEP 2: EXPECTATIONS
+  else if (S.step === 2) {
+    content = `
+      <h2>Meeting Context</h2>
+      <p style="color: ${C.grey}; margin-bottom: 24px;">What are their expectations for today?</p>
+      ${EXPECTS.map(e => `
+        <div class="tile ${d.expectations.includes(e.id) ? 'selected' : ''}" onclick="toggleArray('expectations', '${e.id}')">
+          <span style="font-size: 24px;">${e.icon}</span>
+          <div style="flex: 1; font-weight: 600; color: ${d.expectations.includes(e.id) ? C.purple : '#000'}">${e.label}</div>
+          <div style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid ${d.expectations.includes(e.id) ? C.purple : '#E2E2E5'}; background: ${d.expectations.includes(e.id) ? C.purple : 'transparent'}; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">${d.expectations.includes(e.id) ? '✓' : ''}</div>
+        </div>
+      `).join('')}
+      <div class="card" style="margin-top: 20px;">
+        <label class="label-text">Other context / Anything new?</label>
+        <textarea rows="3" oninput="handleInput('context', this.value)" placeholder="Notes on budget, leadership changes...">${escape(d.context)}</textarea>
+      </div>
+    `;
+  }
+
+  // STEP 3: MISSIONS
+  else if (S.step === 3) {
+    content = `
+      <h2>Their Priorities</h2>
+      <p style="color: ${C.grey}; margin-bottom: 24px;">Which of these is mission-critical for their district?</p>
+      <div class="grid-2">
+        ${MISSIONS.map(m => `
+          <div class="tile ${d.missions.includes(m.id) ? 'selected' : ''}" onclick="toggleArray('missions', '${m.id}')" style="margin-bottom: 0;">
+            <span style="font-size: 20px;">${m.icon}</span>
+            <div style="flex: 1; font-weight: 600; font-size: 13px; color: ${d.missions.includes(m.id) ? m.color : '#000'}">${m.label}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="card" style="margin-top: 20px; border-left: 4px solid ${C.purple};">
+        <label class="label-text">Biggest Pain Point</label>
+        <textarea rows="3" oninput="handleInput('pain', this.value)" placeholder="Note what they said directly—this is gold for the AM...">${escape(d.pain)}</textarea>
+      </div>
+    `;
+  }
+
+  // STEP 4: FEATURES
+  else if (S.step === 4) {
+    content = `
+      <h2>Feature Reactions</h2>
+      <p style="color: ${C.grey}; margin-bottom: 24px;">Which features excited them the most?</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
+        ${FEATURES.map(f => `
+          <div onclick="toggleArray('features', '${f}')" style="padding: 8px 16px; border-radius: 20px; border: 1.5px solid ${d.features.includes(f) ? C.purple : '#E2E2E5'}; background: ${d.features.includes(f) ? 'rgba(142,71,255,0.1)' : '#fff'}; color: ${d.features.includes(f) ? C.purple : C.grey}; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.1s;">
+            ${d.features.includes(f) ? '✓ ' : ''}${f}
+          </div>
+        `).join('')}
+      </div>
+      <div class="card">
+        <label class="label-text">Reaction Notes / Quotes</label>
+        <textarea rows="2" oninput="handleInput('featureNotes', this.value)" placeholder='"We have been looking for something like this..."'>${escape(d.featureNotes)}</textarea>
+      </div>
+    `;
+  }
+
+  // STEP 5: DEMO
+  else if (S.step === 5) {
+    const demos = [
+      { id: 'brian', label: 'Walked through M2 live', sub: 'During this 1st meeting' },
+      { id: 'mve', label: 'M2 Virtual Experience', sub: 'Hosted by Jenn (CS)' },
+      { id: 'vdemo', label: 'Virtual Product Demo', sub: 'Hosted by AM / CSM' },
+      { id: 'none', label: 'No demo yet', sub: 'Moving straight to next steps' }
+    ];
+    content = `
+      <h2>Demo Status</h2>
+      <p style="color: ${C.grey}; margin-bottom: 24px;">What did the prospect see today?</p>
+      ${demos.map(dm => `
+        <div class="tile ${d.demoType === dm.id ? 'selected' : ''}" onclick="handleInput('demoType', '${dm.id}'); render();">
+          <div style="flex: 1;">
+            <div style="font-weight: 600; color: ${d.demoType === dm.id ? C.purple : '#000'}">${dm.label}</div>
+            <div style="font-size: 12px; color: ${C.grey}">${dm.sub}</div>
+          </div>
+          <div style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid ${d.demoType === dm.id ? C.purple : '#E2E2E5'}; background: ${d.demoType === dm.id ? C.purple : 'transparent'}; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">${d.demoType === dm.id ? '✓' : ''}</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // STEP 6: NEXT STEPS (BRANCHING)
+  else if (S.step === 6) {
+    content = `
+      <h2>Next Steps</h2>
+      <p style="color: ${C.grey}; margin-bottom: 20px;">Ask the prospect directly at the close of the meeting.</p>
+      
+      <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <button onclick="setBranch('buy')" style="flex: 1; padding: 15px; border-radius: 10px; border: 2px solid ${d.branch === 'buy' ? C.green : '#E2E2E5'}; background: ${d.branch === 'buy' ? 'rgba(52,199,89,0.1)' : '#fff'}; font-weight: 700; color: ${d.branch === 'buy' ? C.green : C.grey};">✅ Ready to Buy</button>
+        <button onclick="setBranch('pilot')" style="flex: 1; padding: 15px; border-radius: 10px; border: 2px solid ${d.branch === 'pilot' ? C.orange : '#E2E2E5'}; background: ${d.branch === 'pilot' ? 'rgba(255,143,0,0.1)' : '#fff'}; font-weight: 700; color: ${d.branch === 'pilot' ? C.orange : C.grey};">🔬 Pilot / Info</button>
+        <button onclick="setBranch('nurture')" style="flex: 1; padding: 15px; border-radius: 10px; border: 2px solid ${d.branch === 'nurture' ? C.grey : '#E2E2E5'}; background: ${d.branch === 'nurture' ? '#F5F5F7' : '#fff'}; font-weight: 700; color: ${C.grey};">📬 Nurture</button>
+      </div>
+    `;
+
+    if (d.branch === 'buy') {
+      content += `
+        <div class="card" style="border-left: 4px solid ${C.green}; background: rgba(52,199,89,0.03);">
+          <div style="font-size: 12px; font-weight: 700; color: ${C.green}; margin-bottom: 10px;">PROPOSAL TRACK</div>
+          <label class="label-text">Assigned AM</label>
+          <input type="text" oninput="handleInput('amNotes', this.value)" value="${escape(d.amNotes)}" placeholder="Which AM is taking this?" style="margin-bottom: 15px;">
+          <label class="label-text">2nd Meeting Date/Time</label>
+          <input type="text" oninput="handleInput('nextAction', this.value)" value="${escape(d.nextAction)}" placeholder="e.g. Thursday 2pm EST">
+        </div>`;
+    } else if (d.branch === 'pilot') {
+      content += `
+        <div class="card" style="border-left: 4px solid ${C.orange}; background: rgba(255,143,0,0.03);">
+          <div style="font-size: 12px; font-weight: 700; color: ${C.orange}; margin-bottom: 10px;">EVALUATION TRACK</div>
+          <label class="label-text">Pilot Type / Next Action</label>
+          <input type="text" oninput="handleInput('nextAction', this.value)" value="${escape(d.nextAction)}" placeholder="e.g. Demo Device Shipment, MVE..." style="margin-bottom: 15px;">
+          <label class="label-text">AM Brief / Concerns to Address</label>
+          <textarea rows="2" oninput="handleInput('amNotes', this.value)" placeholder="What does the AM need to prepare for?">${escape(d.amNotes)}</textarea>
+        </div>`;
+    } else if (d.branch === 'nurture') {
+      content += `
+        <div class="card" style="border-left: 4px solid ${C.grey};">
+          <div style="font-size: 12px; font-weight: 700; color: ${C.grey}; margin-bottom: 10px;">NURTURE TRACK</div>
+          <label class="label-text">Reason for Delay</label>
+          <input type="text" oninput="handleInput('amNotes', this.value)" value="${escape(d.amNotes)}" placeholder="e.g. Budget timing, wrong time of year" style="margin-bottom: 15px;">
+          <label class="label-text">When to Re-engage</label>
+          <input type="text" oninput="handleInput('nextAction', this.value)" value="${escape(d.nextAction)}" placeholder="e.g. Q3, Next Fall...">
+        </div>`;
+    }
+  }
+
+  // STEP 7: SUMMARY & EXPORT
+  else if (S.step === 7) {
+    const outcomeColor = d.branch === 'buy' ? C.green : d.branch === 'pilot' ? C.orange : C.grey;
+    content = `
+      <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Handoff Summary</h2>
+        <span style="background: ${outcomeColor}20; color: ${outcomeColor}; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase;">
+          ${d.branch === 'buy' ? 'Ready to Buy' : d.branch === 'pilot' ? 'Needs Pilot' : 'Nurture'}
+        </span>
+      </div>
+
+      <div class="card" style="border-top: 4px solid ${C.purple};">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+          <div>
+            <h1 style="font-size: 22px; margin-bottom: 4px;">${escape(d.name)}</h1>
+            <div style="color: ${C.grey}; font-weight: 500;">${escape(d.org)} ${d.role ? '· ' + escape(d.role) : ''}</div>
+          </div>
+          <div style="text-align: right; color: ${C.grey}; font-size: 12px;">
+            <div>DATE</div>
+            <div style="font-weight: 600; color: #000;">${d.date}</div>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+          <span class="label-text">Expectations & Priorities</span>
+          <div style="font-size: 14px;">${d.expectations.join(', ')} <br> ${d.missions.join(', ')}</div>
+        </div>
+        
+        <div style="margin-bottom: 15px;">
+          <span class="label-text">Identified Pain Point</span>
+          <div style="font-size: 14px; background: #F5F5F7; padding: 10px; border-radius: 6px;">${escape(d.pain) || 'No specific notes'}</div>
+        </div>
+
+        <div style="margin-bottom: 15px;">
+          <span class="label-text">Key Features of Interest</span>
+          <div style="font-size: 14px;">${d.features.join(' · ') || 'None selected'}</div>
+        </div>
+
+        <div style="background: ${outcomeColor}10; border: 1px solid ${outcomeColor}40; padding: 15px; border-radius: 8px;">
+          <span class="label-text" style="color: ${outcomeColor}">Next Steps & AM Notes</span>
+          <div style="font-size: 14px; margin-bottom: 8px;"><strong>Action:</strong> ${escape(d.nextAction) || 'N/A'}</div>
+          <div style="font-size: 14px;"><strong>Notes:</strong> ${escape(d.amNotes) || 'N/A'}</div>
+        </div>
+      </div>
+
+      <div class="no-print" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px;">
+        <button onclick="copyToCRM()" style="background: ${C.purple}; color: #fff; border: none; padding: 16px; border-radius: 8px; font-weight: 700;">
+          ${S.copyMsg || '📋 Copy for CRM'}
+        </button>
+        <button onclick="window.print()" style="background: ${C.blue}; color: #fff; border: none; padding: 16px; border-radius: 8px; font-weight: 700;">
+          🖨️ Export to PDF
+        </button>
+        <button onclick="saveRecord()" style="grid-column: span 2; background: #fff; color: ${C.grey}; border: 1.5px solid #E2E2E5; padding: 16px; border-radius: 8px; font-weight: 700;">
+          💾 Save & Return Home
+        </button>
+      </div>
+    `;
+  }
+
+  // Navigation Buttons Container
+  let navButtons = '';
+  if (S.step < 7) {
+    navButtons = `
+      <div class="no-print" style="display: flex; gap: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #E2E2E5;">
+        ${S.step > 1 ? `<button onclick="nav(-1)" style="flex: 1; padding: 16px; border-radius: 8px; border: 1.5px solid #E2E2E5; background: #fff; font-weight: 600; color: ${C.grey};">← Back</button>` : '<div></div>'}
+        <button id="next-btn" onclick="nav(1)" style="flex: 2; padding: 16px; border-radius: 8px; background: ${C.purple}; color: #fff; border: none; font-weight: 700;">Continue →</button>
+      </div>
+    `;
+  }
+
+  return `<div class="container">${header}${progress}${content}${navButtons}</div>`;
+}
+
+function ViewRecords() {
+  return `
+    <div class="container">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2>Saved Meetings</h2>
+        <button onclick="S.view='home'; render();" style="background: none; border: none; color: ${C.purple}; font-weight: 600;">← Back</button>
+      </div>
+      ${S.records.length === 0 ? `<p style="color: ${C.grey}; text-align: center; padding: 40px;">No meetings saved yet.</p>` : ''}
+      ${S.records.map((r, index) => `
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-weight: 700; font-size: 16px;">${escape(r.data.name)}</div>
+            <div style="font-size: 13px; color: ${C.grey};">${escape(r.data.org)} · ${r.data.date}</div>
+          </div>
+          <button onclick="S.records.splice(${index}, 1); localStorage.setItem('swivl_meetings', JSON.stringify(S.records)); render();" style="background: none; border: none; color: ${C.red}; font-size: 12px; font-weight: 600;">Delete</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// ==========================================
+// 6. INITIALIZATION
+// ==========================================
+render();
+</script>
+</body>
+</html>
